@@ -1,0 +1,87 @@
+services:
+  sleepy-cat-books-db:
+    container_name: scb-db
+    image: postgres:17.0-alpine3.20
+    restart: always
+    privileged: true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      - scb-db-data:/var/lib/postgresql/data/pgdata
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
+
+  sleepy-cat-books-prestart:
+    container_name: scb-prestart
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}"
+    build:
+      context: ./backend
+    networks:
+      - default
+    depends_on:
+      sleepy-cat-books-db:
+        condition: service_healthy
+        restart: true
+    command: bash scripts/prestart.sh
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_SERVER=${POSTGRES_SERVER}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - TESTING=${TESTING}
+
+  sleepy-cat-books-backend:
+    container_name: scb-backend
+    image: "${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}"
+    restart: always
+    networks:
+      - default
+    depends_on:
+      sleepy-cat-books-db:
+        condition: service_healthy
+        restart: true
+      sleepy-cat-books-prestart:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    build:
+      context: ./backend
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health-check"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 2s
+
+  sleepy-cat-books-frontend:
+    container_name: scb-frontend
+    image: "${DOCKER_IMAGE_FRONTEND?Variable not set}:${TAG-latest}"
+    restart: always
+    networks:
+      - default
+    depends_on:
+      sleepy-cat-books-backend:
+        condition: service_healthy
+        restart: true
+    environment:
+      - PUBLIC_BACKEND_URL="http://sleepy-cat-books-backend:8080"
+    build:
+      context: ./frontend
+    ports:
+      - "5173:5173"
+      - "4173:4173"
+
+volumes:
+  scb-db-data:
